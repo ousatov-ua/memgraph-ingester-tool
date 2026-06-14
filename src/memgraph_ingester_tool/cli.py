@@ -109,6 +109,8 @@ def _register_code_discovery_context(sub: Any, common: argparse.ArgumentParser) 
     p.add_argument("--limit", type=int, default=3)
     p.add_argument("--include-tests", action="store_true")
     p.add_argument("--neighbor-limit", type=int, default=3)
+    p.add_argument("--include-keys", action="store_true",
+                   help="Include sourceId/ragRole on returned anchors")
     p.set_defaults(cmd="code_discovery_context")
 
 
@@ -119,6 +121,8 @@ def _register_code_file_context(sub: Any, common: argparse.ArgumentParser) -> No
     p.add_argument("--limit-files", type=int, default=5)
     p.add_argument("--symbol-limit", type=int, default=8)
     p.add_argument("--include-tests", action="store_true")
+    p.add_argument("--include-index-stats", action="store_true",
+                   help="Include chunkCount and chunkRoles")
     p.set_defaults(cmd="code_file_context")
 
 
@@ -131,6 +135,10 @@ def _register_code_flow_context(sub: Any, common: argparse.ArgumentParser) -> No
     p.add_argument("--symbol-limit", type=int, default=3)
     p.add_argument("--include-tests", action="store_true")
     p.add_argument("--detail", choices=["compact", "full"], default="compact")
+    p.add_argument("--include-index-stats", action="store_true",
+                   help="Include chunkCount and chunkRoles in compact file outlines")
+    p.add_argument("--path-format", choices=["inline", "refs"], default=None,
+                   help="Flow edge path shape (default: refs for compact, inline for full)")
     p.set_defaults(cmd="code_flow_context")
 
 
@@ -195,6 +203,8 @@ def _register_code_impact(sub: Any, common: argparse.ArgumentParser) -> None:
     p.add_argument("--include-tests", type=_bool, default=True)
     p.add_argument("--compact", type=_bool, default=True)
     p.add_argument("--view", choices=["callers", "files"], default="callers")
+    p.add_argument("--path-format", choices=["inline", "refs"], default=None,
+                   help="Path shape for compact output (default: refs)")
     p.set_defaults(cmd="code_impact")
 
 
@@ -253,6 +263,9 @@ def _register_code_operation_hot_paths(sub: Any, common: argparse.ArgumentParser
     p.add_argument("--path-contains", default=None)
     p.add_argument("--limit", type=int, default=DISCOVERY_LIMIT)
     p.add_argument("--include-tests", action="store_true")
+    p.add_argument("--sink-limit", type=int, default=3,
+                   help="Maximum sink names per row unless --include-all-sinks is set")
+    p.add_argument("--include-all-sinks", action="store_true")
     p.set_defaults(cmd="code_operation_hot_paths")
 
 
@@ -287,6 +300,8 @@ def _register_code_test_context(sub: Any, common: argparse.ArgumentParser) -> No
     p.add_argument("test_fragment")
     p.add_argument("--limit", type=int, default=DISCOVERY_LIMIT)
     p.add_argument("--production-limit", type=int, default=DISCOVERY_LIMIT)
+    p.add_argument("--path-format", choices=["inline", "refs"], default="refs",
+                   help="Path shape for compact output (default: refs)")
     p.set_defaults(cmd="code_test_context")
 
 
@@ -303,7 +318,10 @@ def _register_raw_read_cypher(sub: Any, common: argparse.ArgumentParser) -> None
 def _register_memory_orientation(sub: Any, common: argparse.ArgumentParser) -> None:
     p = sub.add_parser("memory_orientation", parents=[common],
                        help="Rules plus open findings, tasks, questions, and risks")
-    p.add_argument("--compact", action="store_true")
+    p.add_argument("--compact", dest="compact", action="store_true", default=True,
+                   help="Omit body fields (default)")
+    p.add_argument("--full", dest="compact", action="store_false",
+                   help="Include body fields")
     p.set_defaults(cmd="memory_orientation")
 
 
@@ -438,6 +456,7 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 args.query, project, args.limit,
                 include_tests=args.include_tests,
                 neighbor_limit=args.neighbor_limit,
+                include_keys=args.include_keys,
                 output_format=fmt,
             )
         case "code_file_context":
@@ -446,6 +465,7 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 limit_files=args.limit_files,
                 symbol_limit=args.symbol_limit,
                 include_tests=args.include_tests,
+                include_index_stats=args.include_index_stats,
                 output_format=fmt,
             )
         case "code_flow_context":
@@ -456,6 +476,8 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 symbol_limit=args.symbol_limit,
                 include_tests=args.include_tests,
                 detail=args.detail,
+                include_index_stats=args.include_index_stats,
+                path_format=args.path_format,
                 output_format=fmt,
             )
         case "code_lookup_type":
@@ -504,6 +526,7 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 skip=args.skip, limit=args.limit, depth=args.depth,
                 include_tests=args.include_tests,
                 compact=args.compact, view=args.view,
+                path_format=args.path_format,
                 output_format=fmt,
             )
         case "code_callers":
@@ -549,6 +572,8 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 path_contains=args.path_contains,
                 limit=args.limit,
                 include_tests=args.include_tests,
+                sink_limit=args.sink_limit,
+                include_all_sinks=args.include_all_sinks,
                 output_format=fmt,
             )
         case "code_resource_risk_scan":
@@ -574,6 +599,7 @@ def _dispatch(tools: MemgraphTools, args: argparse.Namespace) -> Any:
                 args.test_fragment, project,
                 limit=args.limit,
                 production_limit=args.production_limit,
+                path_format=args.path_format,
                 output_format=fmt,
             )
         case "raw_read_cypher":

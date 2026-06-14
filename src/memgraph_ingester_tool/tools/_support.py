@@ -8,6 +8,7 @@ from typing import Any
 from memgraph_ingester_tool.db import ToolError
 
 OUTPUT_FORMATS = frozenset({"json", "table_json"})
+PATH_FORMATS = frozenset({"inline", "refs"})
 DISCOVERY_LIMIT = 5
 LOOKUP_LIMIT = 10
 CALL_GRAPH_LIMIT = 10
@@ -116,6 +117,138 @@ def _normalize_output_format(output_format: str | None) -> str:
         allowed = ", ".join(sorted(OUTPUT_FORMATS))
         raise ToolError(f"Unsupported format {output_format!r}. Allowed: {allowed}.")
     return normalized
+
+
+def _normalize_path_format(path_format: str | None, *, default: str = "refs") -> str:
+    normalized = (path_format or default).strip().lower()
+    if normalized not in PATH_FORMATS:
+        allowed = ", ".join(sorted(PATH_FORMATS))
+        raise ToolError(f"Unsupported path_format {path_format!r}. Allowed: {allowed}.")
+    return normalized
+
+
+def _replace_key_preserving_order(
+    row: dict[str, Any],
+    old_key: str,
+    new_key: str,
+    new_value: Any,
+) -> None:
+    updated: dict[str, Any] = {}
+    replaced = False
+    for key, value in row.items():
+        if key == old_key:
+            updated[new_key] = new_value
+            replaced = True
+        else:
+            updated[key] = value
+    if replaced:
+        row.clear()
+        row.update(updated)
+
+
+def _replace_keys_with_ref(
+    row: dict[str, Any],
+    *,
+    first_key: str,
+    second_key: str,
+    ref_key: str,
+    ref_value: Any,
+) -> None:
+    updated: dict[str, Any] = {}
+    inserted = False
+    for key, value in row.items():
+        if key == first_key:
+            updated[ref_key] = ref_value
+            inserted = True
+        elif key == second_key and inserted:
+            continue
+        else:
+            updated[key] = value
+    if inserted:
+        row.clear()
+        row.update(updated)
+
+
+def _add_file_refs(
+    response: dict[str, Any],
+    sections: Sequence[str],
+    *,
+    refs_key: str = "fileRefs",
+    path_key: str = "path",
+    ref_key: str = "file",
+) -> dict[str, Any]:
+    paths: list[str] = []
+    for section in sections:
+        rows = response.get(section)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            path = row.get(path_key)
+            if isinstance(path, str) and path and path not in paths:
+                paths.append(path)
+    if not paths:
+        return response
+
+    response[refs_key] = paths
+    path_index = {path: index for index, path in enumerate(paths)}
+    for section in sections:
+        rows = response.get(section)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            path = row.get(path_key)
+            if path in path_index:
+                _replace_key_preserving_order(row, path_key, ref_key, path_index[path])
+    return response
+
+
+def _add_flow_edge_file_refs(
+    response: dict[str, Any],
+    *,
+    edges_key: str = "flowEdges",
+    refs_key: str = "edgeFiles",
+) -> dict[str, Any]:
+    flow_edges = response.get(edges_key)
+    if not isinstance(flow_edges, list):
+        return response
+
+    paths: list[str] = []
+    for edge in flow_edges:
+        if not isinstance(edge, Mapping):
+            continue
+        for key in ("callerPath", "calleePath"):
+            path = edge.get(key)
+            if isinstance(path, str) and path and path not in paths:
+                paths.append(path)
+    if not paths:
+        return response
+
+    response[refs_key] = paths
+    path_index = {path: index for index, path in enumerate(paths)}
+    for edge in flow_edges:
+        if not isinstance(edge, dict):
+            continue
+        caller_path = edge.get("callerPath")
+        if caller_path in path_index:
+            _replace_key_preserving_order(
+                edge,
+                "callerPath",
+                "callerFile",
+                path_index[caller_path],
+            )
+        callee_path = edge.get("calleePath")
+        if callee_path in path_index:
+            _replace_key_preserving_order(
+                edge,
+                "calleePath",
+                "calleeFile",
+                path_index[callee_path],
+            )
+    return response
 
 
 def _strip_nones(obj: Any) -> Any:

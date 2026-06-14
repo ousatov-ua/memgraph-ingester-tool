@@ -15,9 +15,12 @@ from memgraph_ingester_tool.tools._risk import (
 from memgraph_ingester_tool.tools._search_support import _test_fragment_parts
 from memgraph_ingester_tool.tools._support import (
     DISCOVERY_LIMIT,
+    _add_file_refs,
     _bounded_limit,
     _normalize_lower_list,
+    _normalize_path_format,
     _normalize_sections,
+    _replace_keys_with_ref,
     _with_result_meta,
 )
 
@@ -156,9 +159,12 @@ class CodeAnalysisTools(MemgraphToolsBase):
         limit: int = DISCOVERY_LIMIT,
         include_tests: bool = False,
         output_format: str = "json",
+        sink_limit: int = 3,
+        include_all_sinks: bool = False,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
         bounded_limit = _bounded_limit(limit, default=DISCOVERY_LIMIT, maximum=50)
+        bounded_sink_limit = _bounded_limit(sink_limit, default=3, maximum=50)
         fragments = _normalize_lower_list(sink_fragments)
         custom_fragments = bool(fragments)
         fragments = fragments or sorted(DEFAULT_OPERATION_SINKS)
@@ -180,6 +186,8 @@ class CodeAnalysisTools(MemgraphToolsBase):
             row.pop("signature", None)
             row.pop("score", None)
             row.pop("lines", None)
+            if not include_all_sinks and isinstance(row.get("sinks"), list):
+                row["sinks"] = row["sinks"][:bounded_sink_limit]
             row["riskHints"] = [
                 hint
                 for hint, active in (
@@ -330,8 +338,10 @@ class CodeAnalysisTools(MemgraphToolsBase):
         limit: int = DISCOVERY_LIMIT,
         production_limit: int = DISCOVERY_LIMIT,
         output_format: str = "json",
+        path_format: str | None = None,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
+        normalized_path_format = _normalize_path_format(path_format, default="refs")
         bounded_limit = _bounded_limit(limit, default=DISCOVERY_LIMIT, maximum=25)
         bounded_production_limit = _bounded_limit(
             production_limit,
@@ -387,13 +397,42 @@ class CodeAnalysisTools(MemgraphToolsBase):
         if fuzzy_match_count:
             meta["fuzzyMatchesSuppressed"] = True
             meta["fuzzyMatchCount"] = fuzzy_match_count
+        response = {
+            "project": project_name,
+            "tests": rows,
+            "productionCallees": production_rows,
+            "testFiles": file_rows,
+            "meta": meta,
+        }
+        if normalized_path_format == "refs":
+            _add_file_refs(response, ("tests", "productionCallees", "testFiles"))
+            self._add_test_context_refs(response)
         return self._finalize_response(
-            {
-                "project": project_name,
-                "tests": rows,
-                "productionCallees": production_rows,
-                "testFiles": file_rows,
-                "meta": meta,
-            },
+            response,
             output_format,
         )
+
+    def _add_test_context_refs(self, response: dict[str, Any]) -> None:
+        tests = response.get("tests")
+        production_callees = response.get("productionCallees")
+        if not isinstance(tests, Sequence) or not isinstance(production_callees, Sequence):
+            return
+
+        test_index = {
+            (test.get("owner"), test.get("name")): index
+            for index, test in enumerate(tests)
+            if isinstance(test, dict)
+        }
+        for row in production_callees:
+            if not isinstance(row, dict):
+                continue
+            key = (row.get("testOwner"), row.get("testName"))
+            if key not in test_index:
+                continue
+            _replace_keys_with_ref(
+                row,
+                first_key="testOwner",
+                second_key="testName",
+                ref_key="test",
+                ref_value=test_index[key],
+            )

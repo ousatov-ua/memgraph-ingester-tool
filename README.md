@@ -60,9 +60,9 @@ server registers the identical set as MCP tools.
 | `code_orientation` | Compact package/type/call overview; pass `sections` to keep it focused. |
 | `code_search` | Hybrid CodeChunk search — vector + lexical signals fused by reciprocal rank; defaults to 5 non-test, deduped, primary/file-role hits with compact filters (`kinds`, `path_prefixes`, `path_contains`, `owner_fragment`, `min_score`). |
 | `code_text_search` | Ranked lexical search over indexed chunk text/path/source ids for concrete-term discovery; returns `termMatches`. |
-| `code_discovery_context` | Semantic discovery plus bounded exact/caller/callee/file context in one compact response. |
-| `code_flow_context` | Workflow discovery with semantic/lexical anchors, likely file outlines, related paths, and bounded nearby call edges; pass `detail="full"` for wider expansion. |
-| `code_file_context` | Deterministic file outlines with language, definition/chunk counts, RAG role counts, and top symbols. |
+| `code_discovery_context` | Semantic discovery plus bounded exact/caller/callee/file context in one compact response; `include_keys` restores anchor `sourceId`/`ragRole`. |
+| `code_flow_context` | Workflow discovery with semantic/lexical anchors, likely file outlines, related paths, and bounded nearby call edges; compact output uses `edgeFiles` refs, and `detail="full"` keeps wider inline expansion. |
+| `code_file_context` | Deterministic file outlines with language, definition counts, and top symbols; `include_index_stats` restores chunk counts and RAG role counts. |
 | `code_lookup_type` | Exact class/interface/annotation lookup by name or FQN; member expansion and test code are opt-in. |
 | `code_lookup_methods` | Exact method lookup by signature fragment with source ranges; defaults to 10 compact owner/name/path rows. |
 | `code_lookup_field` | Exact field/constant lookup by FQN or name fragment; compact owner/name/FQN/path rows. |
@@ -70,20 +70,20 @@ server registers the identical set as MCP tools.
 | `code_callers` | Methods that call matching callee signatures; compact, paginated, range-first rows. |
 | `code_callees` | Callees invoked by matching caller signatures; compact, paginated, range-first rows. |
 | `code_method_context` | Bundled exact method lookup plus caller and callee context for tracing one target. |
-| `code_impact` | Refactor blast-radius for matching method signatures: target methods plus depth-1/depth-2 callers, test flags, and file/package boundary flags; `view="files"` returns a risk-ranked file list. |
+| `code_impact` | Refactor blast-radius for matching method signatures: target methods plus depth-1/depth-2 callers, test flags, and file/package boundary flags; compact output uses `fileRefs`, and `view="files"` returns a risk-ranked file list. |
 | `code_hot_paths` | Hot-path candidates from type size, method size, fan-in, and fan-out; `include_evidence=true` adds source locations. |
-| `code_operation_hot_paths` | Methods with many calls into operation-like sinks (run/query/write/read/save/delete…); accepts owner/path filters for subsystem audits. |
+| `code_operation_hot_paths` | Methods with many calls into operation-like sinks (run/query/write/read/save/delete…); accepts owner/path filters and caps sink examples unless `include_all_sinks` is set. |
 | `code_resource_risk_scan` | Heuristic scan of query/config/resource files for risky patterns such as unbounded graph traversals, repeated subqueries, and per-row writes. |
 | `code_quality_stats` | Graph-wide code quality and quantity metrics; defaults to non-test code. |
 | `code_hierarchy` | Class ancestry, children, interfaces, and interface implementors for one FQN. |
-| `code_test_context` | Failing-test/CI triage from a test name or class fragment to tests, test files, and production callees. |
+| `code_test_context` | Failing-test/CI triage from a test name or class fragment to tests, test files, and production callees; compact output uses `fileRefs`. |
 | `raw_read_cypher` | Read-only, project-scoped Cypher escape hatch for edge cases. |
 
 ### Memory endpoints
 
 | Endpoint | Description |
 | --- | --- |
-| `memory_orientation` | Rules plus open findings, tasks, questions, and risks; `compact=true` omits body fields. |
+| `memory_orientation` | Rules plus open findings, tasks, questions, and risks; CLI defaults to compact output, and `--full` includes body fields. |
 | `memory_schema` | Allowed memory types, upsert fields, controlled values, and CodeRef targets. |
 | `memory_search` | MemoryChunk vector search with index-only hit metadata. |
 | `memory_get` | Canonical memory node plus resolved CodeRefs. |

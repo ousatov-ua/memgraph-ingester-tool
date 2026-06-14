@@ -1,6 +1,7 @@
 
 import pytest
 
+from memgraph_ingester_tool.cli import build_parser
 from memgraph_ingester_tool.config import ToolConfig
 from memgraph_ingester_tool.db import ToolError
 from memgraph_ingester_tool.tools import MemgraphTools, _project_vector_index_name
@@ -208,6 +209,7 @@ class SearchClient:
                 "owner": "Foo",
                 "name": "a",
                 "path": "src/main/java/demo/Foo.java",
+                "ragRole": "primary",
                 "startLine": 10,
                 "endLine": 20,
                 "score": 0.9,
@@ -219,6 +221,7 @@ class SearchClient:
                 "owner": "Foo",
                 "name": "a",
                 "path": "src/main/java/demo/Foo.java",
+                "ragRole": "primary",
                 "startLine": 10,
                 "endLine": 20,
                 "score": 0.8,
@@ -525,8 +528,13 @@ class UniversalFlowClient:
                     "endLine": 60,
                     "lines": 51,
                     "sinkCallEdges": 6,
-                    "distinctSinks": 3,
-                    "sinks": ["Executor.run", "Executor.read"],
+                    "distinctSinks": 4,
+                    "sinks": [
+                        "Executor.run",
+                        "Executor.read",
+                        "Executor.write",
+                        "Executor.delete",
+                    ],
                     "score": 6051,
                 }
             ]
@@ -1263,6 +1271,33 @@ def test_code_file_context_returns_compact_file_outlines():
         "path",
         "language",
         "definitionCount",
+        "types",
+        "methods",
+        "fields",
+    ]
+    writer_row = result["files"]["rows"][0]
+    assert writer_row[0] == "src/main/java/demo/Writer.java"
+    assert writer_row[3]["rows"] == [["Class", "Writer", "demo.Writer", "class", 1, 80]]
+    assert writer_row[4]["rows"] == [["Writer", "refresh", 10, 40]]
+    assert writer_row[5]["rows"] == [["Writer", "cypher", 7, 7]]
+    assert client.calls[0]["parameters"]["fragments"] == ["Writer.java", "Orchestrator.java"]
+
+
+def test_code_file_context_can_include_index_stats():
+    client = CodeContextClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_file_context(
+        ["Writer.java"],
+        symbol_limit=1,
+        include_index_stats=True,
+        output_format="table_json",
+    )
+
+    assert result["files"]["cols"] == [
+        "path",
+        "language",
+        "definitionCount",
         "chunkCount",
         "chunkRoles",
         "types",
@@ -1270,15 +1305,10 @@ def test_code_file_context_returns_compact_file_outlines():
         "fields",
     ]
     writer_row = result["files"]["rows"][0]
-    assert writer_row[0] == "src/main/java/demo/Writer.java"
     assert writer_row[4] == {
         "cols": ["ragRole", "count"],
         "rows": [["primary", 3]],
     }
-    assert writer_row[5]["rows"] == [["Class", "Writer", "demo.Writer", "class", 1, 80]]
-    assert writer_row[6]["rows"] == [["Writer", "refresh", 10, 40]]
-    assert writer_row[7]["rows"] == [["Writer", "cypher", 7, 7]]
-    assert client.calls[0]["parameters"]["fragments"] == ["Writer.java", "Orchestrator.java"]
 
 
 def test_code_flow_context_bundles_anchors_files_and_edges():
@@ -1306,13 +1336,17 @@ def test_code_flow_context_bundles_anchors_files_and_edges():
     assert "lexicalAnchors" not in result
     # Orchestrator has both vector and lexical hits so it ranks first.
     assert result["files"]["rows"][0][0] == "src/main/java/demo/Orchestrator.java"
+    assert result["edgeFiles"] == [
+        "src/main/java/demo/Orchestrator.java",
+        "src/main/java/demo/Writer.java",
+    ]
     assert result["flowEdges"]["rows"] == [
         [
-            "src/main/java/demo/Orchestrator.java",
+            0,
             "Orchestrator",
             "run",
             50,
-            "src/main/java/demo/Writer.java",
+            1,
             "Writer",
             "refresh",
             10,
@@ -1357,6 +1391,10 @@ def test_code_flow_context_defaults_are_compact():
     result = tools.code_flow_context("refresh stale code chunks")
 
     assert "detail" not in result["meta"]
+    assert result["edgeFiles"] == [
+        "src/main/java/demo/Orchestrator.java",
+        "src/main/java/demo/Writer.java",
+    ]
     edge_calls = [
         call
         for call in client.calls
@@ -1377,6 +1415,52 @@ def test_code_flow_context_full_detail_keeps_expanded_edges_and_related_files():
     )
 
     assert "detail" not in result["meta"]
+    assert result["flowEdges"][0]["callerPath"] == "src/main/java/demo/Orchestrator.java"
+    assert result["flowEdges"][0]["calleePath"] == "src/main/java/demo/Writer.java"
+    assert "edgeFiles" not in result
+    assert "chunkCount" in result["files"][0]
+    assert "chunkRoles" in result["files"][0]
+
+
+def test_code_flow_context_can_request_inline_paths_in_compact_detail():
+    client = CodeContextClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_flow_context(
+        "refresh stale code chunks",
+        limit_files=2,
+        anchor_limit=2,
+        symbol_limit=1,
+        path_format="inline",
+        output_format="json",
+    )
+
+    assert result["flowEdges"][0]["callerPath"] == "src/main/java/demo/Orchestrator.java"
+    assert result["flowEdges"][0]["calleePath"] == "src/main/java/demo/Writer.java"
+    assert "edgeFiles" not in result
+
+
+def test_code_discovery_context_omits_anchor_keys_by_default():
+    client = SearchClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_discovery_context("hot path")
+
+    anchor = result["contexts"][0]["anchor"]
+    assert "sourceId" not in anchor
+    assert "ragRole" not in anchor
+    assert anchor["path"] == "src/main/java/demo/Foo.java"
+
+
+def test_code_discovery_context_can_include_anchor_keys():
+    client = SearchClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_discovery_context("hot path", include_keys=True)
+
+    anchor = result["contexts"][0]["anchor"]
+    assert anchor["sourceId"] == "demo.Foo.a()"
+    assert anchor["ragRole"] == "primary"
 
 
 def test_table_json_rejects_unknown_format():
@@ -1997,29 +2081,33 @@ def test_code_impact_returns_targets_and_boundary_flags():
     result = tools.code_impact("refreshCodeChunkEmbeddings", output_format="table_json")
 
     assert result["targetMethods"] == {
-        "cols": ["owner", "name", "signature", "path", "startLine", "endLine"],
+        "cols": ["owner", "name", "signature", "file", "startLine", "endLine"],
         "rows": [
             [
                 "GraphWriter",
                 "refreshCodeChunkEmbeddings",
                 "demo.writer.GraphWriter.refreshCodeChunkEmbeddings(Settings, boolean)",
-                "src/main/java/demo/writer/GraphWriter.java",
+                0,
                 620,
                 623,
             ]
         ],
     }
+    assert result["fileRefs"] == [
+        "src/main/java/demo/writer/GraphWriter.java",
+        "src/main/java/demo/ingestion/IngestionOrchestrator.java",
+        "src/test/java/demo/IngesterCliTest.java",
+    ]
     assert result["impacts"]["cols"] == [
         "depth",
         "owner",
         "name",
-        "path",
+        "file",
         "startLine",
         "endLine",
         "viaOwner",
         "viaName",
-        "targetOwner",
-        "targetName",
+        "target",
         "isTest",
         "crossesPackageBoundary",
     ]
@@ -2027,17 +2115,16 @@ def test_code_impact_returns_targets_and_boundary_flags():
         1,
         "IngestionOrchestrator",
         "refresh",
-        "src/main/java/demo/ingestion/IngestionOrchestrator.java",
+        1,
         400,
         420,
         None,
         None,
-        "GraphWriter",
-        "refreshCodeChunkEmbeddings",
+        0,
         False,
         True,
     ]
-    assert result["impacts"]["rows"][1][10:] == [True, True]
+    assert result["impacts"]["rows"][1][-2:] == [True, True]
     assert "targetCount" not in result["meta"]
     assert "format" not in result["meta"]
 
@@ -2053,16 +2140,19 @@ def test_code_impact_uses_text_reference_fallback_when_call_edges_are_missing():
             "depth": 1,
             "owner": "IngestionOrchestrator",
             "name": "refresh",
-            "path": "src/main/java/demo/ingestion/IngestionOrchestrator.java",
+            "file": 1,
             "startLine": 400,
             "endLine": 420,
-            "targetOwner": "GraphWriter",
-            "targetName": "refreshCodeChunkEmbeddings",
+            "target": 0,
             "isTest": False,
             "crossesPackageBoundary": True,
             "inferred": True,
             "evidence": "textReference",
         }
+    ]
+    assert result["fileRefs"] == [
+        "src/main/java/demo/writer/GraphWriter.java",
+        "src/main/java/demo/ingestion/IngestionOrchestrator.java",
     ]
     assert result["meta"]["inference"] == "textReference"
     fallback_call = client.calls[-1]
@@ -2071,6 +2161,18 @@ def test_code_impact_uses_text_reference_fallback_when_call_edges_are_missing():
         "refreshCodeChunkEmbeddings (",
     ]
     assert fallback_call["parameters"]["fallback_limit"] == 11
+
+
+def test_code_impact_can_request_inline_paths():
+    client = ImpactClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_impact("refreshCodeChunkEmbeddings", path_format="inline")
+
+    assert result["targetMethods"][0]["path"] == "src/main/java/demo/writer/GraphWriter.java"
+    assert result["impacts"][0]["path"] == "src/main/java/demo/ingestion/IngestionOrchestrator.java"
+    assert result["impacts"][0]["targetOwner"] == "GraphWriter"
+    assert "fileRefs" not in result
 
 
 def test_code_impact_can_return_file_view():
@@ -2083,8 +2185,13 @@ def test_code_impact_can_return_file_view():
         output_format="table_json",
     )
 
+    assert result["fileRefs"] == [
+        "src/main/java/demo/writer/GraphWriter.java",
+        "src/main/java/demo/ingestion/IngestionOrchestrator.java",
+        "src/test/java/demo/IngesterCliTest.java",
+    ]
     assert result["files"]["cols"] == [
-        "path",
+        "file",
         "role",
         "minDepth",
         "callerCount",
@@ -2116,6 +2223,11 @@ def test_code_operation_hot_paths_returns_risk_hints():
         "sinks",
         "riskHints",
     ]
+    assert result["operationHotPaths"]["rows"][0][7] == [
+        "Executor.run",
+        "Executor.read",
+        "Executor.write",
+    ]
     assert result["operationHotPaths"]["rows"][0][-1] == [
         "many-sink-calls",
         "large-method",
@@ -2134,6 +2246,24 @@ def test_code_operation_hot_paths_allows_custom_signature_fragments():
     tools.code_operation_hot_paths(sink_fragments=["writer"], output_format="json")
 
     assert client.calls[-1]["parameters"]["custom_fragments"] is True
+
+
+def test_code_operation_hot_paths_can_include_all_sinks():
+    client = UniversalFlowClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_operation_hot_paths(
+        sink_limit=2,
+        include_all_sinks=True,
+        output_format="json",
+    )
+
+    assert result["operationHotPaths"][0]["sinks"] == [
+        "Executor.run",
+        "Executor.read",
+        "Executor.write",
+        "Executor.delete",
+    ]
 
 
 def test_code_resource_risk_scan_returns_compact_resource_risks():
@@ -2174,13 +2304,30 @@ def test_code_test_context_returns_tests_and_production_callees():
     assert result["tests"]["cols"] == [
         "owner",
         "name",
-        "path",
+        "file",
         "startLine",
         "endLine",
     ]
+    assert result["fileRefs"] == [
+        "src/test/java/demo/WriterTest.java",
+        "src/main/java/demo/Writer.java",
+    ]
     assert result["productionCallees"]["rows"][0][0] == "Writer"
+    assert result["productionCallees"]["rows"][0][-1] == 0
     assert result["meta"]["exactMatches"] == 1
     assert "methodFragment" not in result["meta"]
+
+
+def test_code_test_context_can_request_inline_paths():
+    client = UniversalFlowClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.code_test_context("refreshes", path_format="inline")
+
+    assert result["tests"][0]["path"] == "src/test/java/demo/WriterTest.java"
+    assert result["productionCallees"][0]["path"] == "src/main/java/demo/Writer.java"
+    assert result["productionCallees"][0]["testOwner"] == "WriterTest"
+    assert "fileRefs" not in result
 
 
 def test_code_test_context_anchors_class_method_fragments():
@@ -2209,9 +2356,8 @@ def test_code_test_context_suppresses_fuzzy_rows_without_exact_match():
 
     assert result["tests"] == []
     assert result["productionCallees"] == []
-    assert result["testFiles"] == [
-        {"path": "src/test/java/demo/WriterTest.java", "language": "java"}
-    ]
+    assert result["testFiles"] == [{"file": 0, "language": "java"}]
+    assert result["fileRefs"] == ["src/test/java/demo/WriterTest.java"]
     assert result["meta"] == {
         "exactMatches": 0,
         "fuzzyMatchesSuppressed": True,
@@ -2230,7 +2376,7 @@ def test_code_test_context_suppresses_fuzzy_rows_when_exact_match_exists():
         {
             "owner": "WriterTest",
             "name": "refreshes",
-            "path": "src/test/java/demo/WriterTest.java",
+            "file": 0,
             "startLine": 30,
             "endLine": 40,
         }
@@ -2239,12 +2385,15 @@ def test_code_test_context_suppresses_fuzzy_rows_when_exact_match_exists():
         {
             "owner": "Writer",
             "name": "refresh",
-            "path": "src/main/java/demo/Writer.java",
+            "file": 1,
             "startLine": 10,
             "endLine": 20,
-            "testOwner": "WriterTest",
-            "testName": "refreshes",
+            "test": 0,
         }
+    ]
+    assert result["fileRefs"] == [
+        "src/test/java/demo/WriterTest.java",
+        "src/main/java/demo/Writer.java",
     ]
     assert result["meta"] == {
         "exactMatches": 1,
@@ -2275,3 +2424,51 @@ def test_memory_orientation_is_full_by_default():
     assert "finding.summary AS summary" in queries
     assert "task.description AS description" in queries
     assert "risk.mitigation AS mitigation" in queries
+
+
+def test_memory_orientation_cli_defaults_to_compact():
+    args = build_parser().parse_args(["memory_orientation", "--project", "demo"])
+
+    assert args.compact is True
+
+
+def test_memory_orientation_cli_keeps_compact_flag():
+    args = build_parser().parse_args(["memory_orientation", "--project", "demo", "--compact"])
+
+    assert args.compact is True
+
+
+def test_memory_orientation_cli_can_request_full():
+    args = build_parser().parse_args(["memory_orientation", "--project", "demo", "--full"])
+
+    assert args.compact is False
+
+
+def test_cli_exposes_code_compaction_flags():
+    parser = build_parser()
+
+    discovery = parser.parse_args(["code_discovery_context", "query", "--include-keys"])
+    file_context = parser.parse_args(["code_file_context", "Writer.java", "--include-index-stats"])
+    flow = parser.parse_args(
+        [
+            "code_flow_context",
+            "query",
+            "--include-index-stats",
+            "--path-format",
+            "inline",
+        ]
+    )
+    impact = parser.parse_args(["code_impact", "refresh", "--path-format", "inline"])
+    operations = parser.parse_args(
+        ["code_operation_hot_paths", "--sink-limit", "2", "--include-all-sinks"]
+    )
+    test_context = parser.parse_args(["code_test_context", "WriterTest", "--path-format", "inline"])
+
+    assert discovery.include_keys is True
+    assert file_context.include_index_stats is True
+    assert flow.include_index_stats is True
+    assert flow.path_format == "inline"
+    assert impact.path_format == "inline"
+    assert operations.sink_limit == 2
+    assert operations.include_all_sinks is True
+    assert test_context.path_format == "inline"

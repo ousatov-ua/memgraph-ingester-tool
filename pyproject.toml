@@ -1,6 +1,6 @@
 [project]
 name = "memgraph-ingester-tool"
-version = "0.1.1"
+version = "0.1.2"
 description = "Standalone query tools for Memgraph graphs created by memgraph-ingester"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,6 +35,13 @@ dev = [
     "pytest>=8.3.0",
     "ruff>=0.8.0",
 ]
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
 
 [build-system]
 requires = ["hatchling"]

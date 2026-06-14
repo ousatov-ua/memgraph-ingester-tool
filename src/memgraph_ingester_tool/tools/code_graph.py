@@ -10,14 +10,17 @@ from memgraph_ingester_tool.db import ToolError
 from memgraph_ingester_tool.tools._support import (
     CALL_GRAPH_LIMIT,
     DISCOVERY_LIMIT,
+    _add_file_refs,
     _bounded_depth,
     _bounded_limit,
     _bounded_skip,
     _first,
     _is_test_path,
     _method_name,
+    _normalize_path_format,
     _overfetch_limit,
     _package_name,
+    _replace_keys_with_ref,
     _trim_overfetch,
     _with_result_meta,
 )
@@ -38,10 +41,14 @@ class CodeGraphTools(CodeLookupTools):
         compact: bool = True,
         view: str = "callers",
         output_format: str = "json",
+        path_format: str | None = None,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
         if view not in {"callers", "files"}:
             raise ToolError("code_impact view must be 'callers' or 'files'.")
+        normalized_path_format = (
+            _normalize_path_format(path_format, default="refs") if compact else "inline"
+        )
         skip_value = _bounded_skip(skip)
         limit_value = _bounded_limit(limit, default=CALL_GRAPH_LIMIT, maximum=200)
         depth_value = _bounded_depth(depth)
@@ -101,13 +108,16 @@ class CodeGraphTools(CodeLookupTools):
                 if result_meta_extra and "inference" in result_meta_extra
                 else None
             )
+            response = {
+                "project": project_name,
+                "targetMethods": targets,
+                "files": file_rows,
+            }
+            if compact and normalized_path_format == "refs":
+                _add_file_refs(response, ("targetMethods", "files"))
             return self._finalize_response(
                 _with_result_meta(
-                    {
-                        "project": project_name,
-                        "targetMethods": targets,
-                        "files": file_rows,
-                    },
+                    response,
                     file_rows,
                     skip=0,
                     limit=limit_value,
@@ -116,13 +126,17 @@ class CodeGraphTools(CodeLookupTools):
                 ),
                 output_format,
             )
+        response = {
+            "project": project_name,
+            "targetMethods": targets,
+            "impacts": impacts,
+        }
+        if compact and normalized_path_format == "refs":
+            _add_file_refs(response, ("targetMethods", "impacts"))
+            self._add_impact_target_refs(response)
         return self._finalize_response(
             _with_result_meta(
-                {
-                    "project": project_name,
-                    "targetMethods": targets,
-                    "impacts": impacts,
-                },
+                response,
                 impacts,
                 skip=skip_value,
                 limit=limit_value,
@@ -130,6 +144,31 @@ class CodeGraphTools(CodeLookupTools):
             ),
             output_format,
         )
+
+    def _add_impact_target_refs(self, response: dict[str, Any]) -> None:
+        targets = response.get("targetMethods")
+        impacts = response.get("impacts")
+        if not isinstance(targets, Sequence) or not isinstance(impacts, Sequence):
+            return
+
+        target_index = {
+            (target.get("owner"), target.get("name")): index
+            for index, target in enumerate(targets)
+            if isinstance(target, Mapping)
+        }
+        for impact in impacts:
+            if not isinstance(impact, dict):
+                continue
+            key = (impact.get("targetOwner"), impact.get("targetName"))
+            if key not in target_index:
+                continue
+            _replace_keys_with_ref(
+                impact,
+                first_key="targetOwner",
+                second_key="targetName",
+                ref_key="target",
+                ref_value=target_index[key],
+            )
 
     def _code_impact_text_reference_rows(
         self,

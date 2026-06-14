@@ -9,9 +9,11 @@ from memgraph_ingester_tool import queries as Q
 from memgraph_ingester_tool.db import ToolError
 from memgraph_ingester_tool.tools._search_support import _lexical_query_terms
 from memgraph_ingester_tool.tools._support import (
+    _add_flow_edge_file_refs,
     _bounded_limit,
     _bounded_symbol_limit,
     _fragment_rank,
+    _normalize_path_format,
     _normalize_string_list,
     _with_result_meta,
 )
@@ -30,6 +32,7 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         include_tests: bool = False,
         neighbor_limit: int = 3,
         output_format: str = "json",
+        include_keys: bool = False,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
         bounded_limit = _bounded_limit(limit, default=3, maximum=8)
@@ -48,7 +51,11 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         for anchor in anchors[:bounded_limit]:
             kind = anchor.get("kind")
             source_id = anchor.get("sourceId")
-            context: dict[str, Any] = {"anchor": anchor}
+            returned_anchor = dict(anchor)
+            if not include_keys:
+                returned_anchor.pop("sourceId", None)
+                returned_anchor.pop("ragRole", None)
+            context: dict[str, Any] = {"anchor": returned_anchor}
             if kind == "Method" and source_id:
                 method_context = self.code_method_context(
                     source_id,
@@ -105,6 +112,7 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         symbol_limit: int = 8,
         include_tests: bool = False,
         output_format: str = "json",
+        include_index_stats: bool = False,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
         fragments = _normalize_string_list(path_fragments)
@@ -164,22 +172,26 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
             types = bounded_items(row.get("types"))
             methods = bounded_items(row.get("methods"))
             fields = bounded_items(row.get("fields"))
-            files.append(
+            file_row = {
+                "path": row.get("path"),
+                "language": row.get("language"),
+                "definitionCount": (
+                    item_count(row.get("types"))
+                    + item_count(row.get("methods"))
+                    + item_count(row.get("fields"))
+                ),
+            }
+            if include_index_stats:
+                file_row["chunkCount"] = row.get("chunkCount")
+                file_row["chunkRoles"] = bounded_items(row.get("chunkRoles"), role_rows=True)
+            file_row.update(
                 {
-                    "path": row.get("path"),
-                    "language": row.get("language"),
-                    "definitionCount": (
-                        item_count(row.get("types"))
-                        + item_count(row.get("methods"))
-                        + item_count(row.get("fields"))
-                    ),
-                    "chunkCount": row.get("chunkCount"),
-                    "chunkRoles": bounded_items(row.get("chunkRoles"), role_rows=True),
                     "types": types,
                     "methods": methods,
                     "fields": fields,
                 }
             )
+            files.append(file_row)
 
         return self._finalize_response(
             _with_result_meta(
@@ -203,6 +215,8 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         include_tests: bool = False,
         detail: str = "compact",
         output_format: str = "json",
+        include_index_stats: bool = False,
+        path_format: str | None = None,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
         bounded_file_limit = _bounded_limit(limit_files, default=3, maximum=12)
@@ -211,6 +225,10 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         normalized_detail = (detail or "compact").strip().lower()
         if normalized_detail not in {"compact", "full"}:
             raise ToolError("detail must be 'compact' or 'full'.")
+        normalized_path_format = _normalize_path_format(
+            path_format,
+            default="inline" if normalized_detail == "full" else "refs",
+        )
         flow_symbol_limit = (
             bounded_symbol_limit if normalized_detail == "full" else min(bounded_symbol_limit, 3)
         )
@@ -328,6 +346,7 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
                 limit_files=len(outline_paths),
                 symbol_limit=flow_symbol_limit,
                 include_tests=include_tests,
+                include_index_stats=include_index_stats or normalized_detail == "full",
                 output_format="json",
             )
             all_files = file_context["files"]
@@ -345,6 +364,8 @@ class CodeContextTools(CodeSearchTools, CodeGraphTools):
         }
         if normalized_detail == "full":
             result["lexicalAnchors"] = lexical_rows
+        if normalized_path_format == "refs":
+            _add_flow_edge_file_refs(result)
         rows_for_meta = semantic_rows + flow_edges + related_files
         if normalized_detail == "full":
             rows_for_meta = rows_for_meta + lexical_rows
