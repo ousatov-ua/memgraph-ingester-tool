@@ -20,6 +20,7 @@ def _load(rel: str) -> str:
 SERVER_STATUS_LANGUAGES: str = _load("code/server_status_languages.cypher")
 SERVER_STATUS_INVENTORY: str = _load("code/server_status_inventory.cypher")
 SERVER_STATUS_MEMORIES: str = _load("code/server_status_memories.cypher")
+EMBEDDING_METADATA: str = _load("embedding_metadata.cypher")
 
 # ── code orientation ──────────────────────────────────────────────────────────
 CODE_ORIENTATION_LANGUAGES: str = _load("code/code_orientation_languages.cypher")

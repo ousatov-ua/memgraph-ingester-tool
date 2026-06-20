@@ -8,6 +8,7 @@ def test_config_uses_primary_environment(monkeypatch):
     monkeypatch.setenv("MEMGRAPH_TOOLS_PROJECT", "demo")
     monkeypatch.setenv("MEMGRAPH_TOOLS_READ_ONLY", "true")
     monkeypatch.setenv("MEMGRAPH_TOOLS_QUERY_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("MEMGRAPH_TOOLS_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     monkeypatch.setenv("MEMGRAPH_TOOLS_EMBEDDING_DIMENSIONS", "768")
 
     config = ToolConfig.from_environment()
@@ -18,7 +19,10 @@ def test_config_uses_primary_environment(monkeypatch):
     assert config.default_project == "demo"
     assert config.read_only is True
     assert config.query_timeout_seconds == 12.5
+    assert config.embedding_model_name == "all-MiniLM-L6-v2"
     assert config.embedding_dimensions == 768
+    assert config.embedding_model_name_explicit is True
+    assert config.embedding_dimensions_explicit is True
 
 
 def test_config_falls_back_to_mcp_environment(monkeypatch):
@@ -60,3 +64,5 @@ def test_config_defaults_without_environment(monkeypatch):
     assert config.read_only is False
     assert config.embedding_model_name == "default"
     assert config.embedding_dimensions == 384
+    assert config.embedding_model_name_explicit is False
+    assert config.embedding_dimensions_explicit is False

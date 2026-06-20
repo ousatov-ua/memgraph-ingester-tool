@@ -14,6 +14,10 @@ def _optional_env(*names: str) -> str | None:
     return None
 
 
+def _has_env(*names: str) -> bool:
+    return _optional_env(*names) is not None
+
+
 def _bool_env(name: str, fallback: str, default: bool) -> bool:
     for n in (name, fallback):
         value = getenv(n)
@@ -75,6 +79,8 @@ class ToolConfig:
     memory_embedding_index_name: str = "memory_chunk_embedding_v2"
     embedding_model_name: str = "default"
     embedding_dimensions: int = 384
+    embedding_model_name_explicit: bool = False
+    embedding_dimensions_explicit: bool = False
 
     @classmethod
     def from_environment(cls) -> ToolConfig:
@@ -124,5 +130,13 @@ class ToolConfig:
                 "MEMGRAPH_TOOLS_EMBEDDING_DIMENSIONS",
                 "MEMGRAPH_INGESTER_MCP_EMBEDDING_DIMENSIONS",
                 cls.embedding_dimensions,
+            ),
+            embedding_model_name_explicit=_has_env(
+                "MEMGRAPH_TOOLS_EMBEDDING_MODEL",
+                "MEMGRAPH_INGESTER_MCP_EMBEDDING_MODEL",
+            ),
+            embedding_dimensions_explicit=_has_env(
+                "MEMGRAPH_TOOLS_EMBEDDING_DIMENSIONS",
+                "MEMGRAPH_INGESTER_MCP_EMBEDDING_DIMENSIONS",
             ),
         )

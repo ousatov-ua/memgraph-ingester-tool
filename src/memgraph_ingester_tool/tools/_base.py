@@ -20,6 +20,9 @@ from memgraph_ingester_tool.tools._vector_index import (
     _vector_index_names,
 )
 
+DEFAULT_EMBEDDING_MODEL_NAME = ToolConfig.embedding_model_name
+DEFAULT_EMBEDDING_DIMENSIONS = ToolConfig.embedding_dimensions
+
 
 class MemgraphToolsBase:
     """Connection handling and response plumbing shared by every tool mixin."""
@@ -57,24 +60,92 @@ class MemgraphToolsBase:
             _vector_index_names(self.client.run("SHOW VECTOR INDEX INFO")),
         )
 
-    def _embedding_text_config(self) -> dict[str, Any]:
+    def _select_vector_index(
+        self,
+        base_index_name: str,
+        project: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        vector_index_rows = self.client.run("SHOW VECTOR INDEX INFO")
+        index_name = _select_vector_index_name(
+            base_index_name,
+            project,
+            _vector_index_names(vector_index_rows),
+        )
+        return index_name, vector_index_rows
+
+    def _embedding_text_config(
+        self,
+        project: str | None = None,
+        *,
+        preferred_chunk_label: str = "CodeChunk",
+    ) -> dict[str, Any]:
         """Config for embeddings.text: pin the model when one is explicitly configured.
 
         Keeps query embeddings on the same model as document embeddings instead of
         relying implicitly on the module default.
         """
-        model_name = (self.config.embedding_model_name or "").strip()
+        model_name = self._resolved_embedding_model_name(project, preferred_chunk_label)
         if not model_name or model_name == "default":
             return {}
         return {"model_name": model_name}
 
-    def _node_sentence_config(self) -> dict[str, Any]:
+    def _resolved_embedding_model_name(
+        self,
+        project: str | None,
+        preferred_chunk_label: str,
+    ) -> str:
+        configured = (self.config.embedding_model_name or "").strip()
+        if self.config.embedding_model_name_explicit or configured != DEFAULT_EMBEDDING_MODEL_NAME:
+            return configured
+        if project is None:
+            return configured
+        rows = self.client.run(
+            Q.EMBEDDING_METADATA,
+            {"project": project, "preferred_label": preferred_chunk_label},
+        )
+        if rows:
+            inferred = str(rows[0].get("modelName") or "").strip()
+            if inferred:
+                return inferred
+        return configured
+
+    def _resolved_embedding_dimensions(
+        self,
+        project: str,
+        *,
+        base_index_name: str,
+        selected_index_name: str | None = None,
+        vector_index_rows: list[dict[str, Any]] | None = None,
+    ) -> int:
+        if (
+            self.config.embedding_dimensions_explicit
+            or self.config.embedding_dimensions != DEFAULT_EMBEDDING_DIMENSIONS
+        ):
+            return self.config.embedding_dimensions
+        if vector_index_rows is None:
+            selected_index_name, vector_index_rows = self._select_vector_index(
+                base_index_name,
+                project,
+            )
+        for row in vector_index_rows:
+            if row.get("index_name") == selected_index_name:
+                dimension = _positive_int(row.get("dimension"))
+                if dimension is not None:
+                    return dimension
+        return self.config.embedding_dimensions
+
+    def _node_sentence_config(
+        self,
+        project: str | None = None,
+        *,
+        preferred_chunk_label: str = "MemoryChunk",
+    ) -> dict[str, Any]:
         """Config for embeddings.node_sentence on MemoryChunk nodes.
 
         Excludes metadata properties exactly like the ingester does so both refresh
         paths produce embeddings from the same text.
         """
-        config = self._embedding_text_config()
+        config = self._embedding_text_config(project, preferred_chunk_label=preferred_chunk_label)
         config["embedding_property"] = "embedding"
         config["excluded_properties"] = list(MEMORY_CHUNK_EXCLUDED_PROPERTIES)
         return config
@@ -140,3 +211,11 @@ class MemgraphToolsBase:
             ),
             output_format,
         )
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        dimension = int(value)
+    except (TypeError, ValueError):
+        return None
+    return dimension if dimension > 0 else None

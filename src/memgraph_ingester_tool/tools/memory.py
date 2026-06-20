@@ -111,7 +111,7 @@ class MemoryTools(MemgraphToolsBase):
         limit: int = 5,
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
-        index_name = self._select_vector_index_name(
+        index_name, _ = self._select_vector_index(
             self.config.memory_embedding_index_name,
             project_name,
         )
@@ -121,7 +121,10 @@ class MemoryTools(MemgraphToolsBase):
                 "index": index_name,
                 "project": project_name,
                 "query": query,
-                "embed_config": self._embedding_text_config(),
+                "embed_config": self._embedding_text_config(
+                    project_name,
+                    preferred_chunk_label="MemoryChunk",
+                ),
                 "limit": _bounded_limit(limit, default=5, maximum=20),
             },
         )
@@ -376,13 +379,18 @@ class MemoryTools(MemgraphToolsBase):
             response = {"project": project_name, "embedded": []}
             return self._finalize_response(response) if finalize else response
 
+        model_name = self._resolved_embedding_model_name(project_name, "MemoryChunk")
+        dimension = self._resolved_embedding_dimensions(
+            project_name,
+            base_index_name=self.config.memory_embedding_index_name,
+        )
         pending = self.client.run(
             Q.MEMORY_REFRESH_EMBEDDINGS_PENDING,
             {
                 "project": project_name,
                 "ids": ids,
-                "model_name": self.config.embedding_model_name,
-                "dimension": self.config.embedding_dimensions,
+                "model_name": model_name,
+                "dimension": dimension,
             },
         )
         pending_ids = [row["id"] for row in pending]
@@ -395,7 +403,10 @@ class MemoryTools(MemgraphToolsBase):
             {
                 "project": project_name,
                 "ids": pending_ids,
-                "embed_config": self._node_sentence_config(),
+                "embed_config": self._node_sentence_config(
+                    project_name,
+                    preferred_chunk_label="MemoryChunk",
+                ),
             },
             write=True,
         )
@@ -410,7 +421,7 @@ class MemoryTools(MemgraphToolsBase):
             {
                 "project": project_name,
                 "ids": pending_ids,
-                "model_name": self.config.embedding_model_name,
+                "model_name": model_name,
                 "dimension": dimension,
             },
             write=True,

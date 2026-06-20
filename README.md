@@ -42,8 +42,8 @@ configurations keep working.
 | `MEMGRAPH_TOOLS_READ_ONLY` | `false` | Disable write operations |
 | `MEMGRAPH_TOOLS_CODE_EMBEDDING_INDEX` | `code_chunk_embedding_v2` | Code vector index base name |
 | `MEMGRAPH_TOOLS_MEMORY_EMBEDDING_INDEX` | `memory_chunk_embedding_v2` | Memory vector index base name |
-| `MEMGRAPH_TOOLS_EMBEDDING_MODEL` | `default` | Embedding model name |
-| `MEMGRAPH_TOOLS_EMBEDDING_DIMENSIONS` | `384` | Embedding dimensions |
+| `MEMGRAPH_TOOLS_EMBEDDING_MODEL` | auto, then `default` | Override embedding model name |
+| `MEMGRAPH_TOOLS_EMBEDDING_DIMENSIONS` | auto, then `384` | Override embedding dimensions |
 
 ## Endpoints
 

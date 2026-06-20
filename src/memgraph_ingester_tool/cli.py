@@ -718,6 +718,8 @@ def main() -> None:
             memory_embedding_index_name=config.memory_embedding_index_name,
             embedding_model_name=config.embedding_model_name,
             embedding_dimensions=config.embedding_dimensions,
+            embedding_model_name_explicit=config.embedding_model_name_explicit,
+            embedding_dimensions_explicit=config.embedding_dimensions_explicit,
         )
     tools = MemgraphTools(config)
     try:

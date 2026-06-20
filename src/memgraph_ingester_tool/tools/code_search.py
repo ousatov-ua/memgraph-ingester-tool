@@ -51,7 +51,7 @@ class CodeSearchTools(MemgraphToolsBase):
         output_format: str = "json",
     ) -> dict[str, Any]:
         project_name = self.resolve_project(project)
-        index_name = self._select_vector_index_name(
+        index_name, _ = self._select_vector_index(
             self.config.code_embedding_index_name,
             project_name,
         )
@@ -112,7 +112,10 @@ class CodeSearchTools(MemgraphToolsBase):
                     "index": index_name,
                     "project": project_name,
                     "queries": variants,
-                    "embed_config": self._embedding_text_config(),
+                    "embed_config": self._embedding_text_config(
+                        project_name,
+                        preferred_chunk_label="CodeChunk",
+                    ),
                     "limit": fetch_limit,
                     "include_tests": include_tests,
                     "rag_roles": role_filter,

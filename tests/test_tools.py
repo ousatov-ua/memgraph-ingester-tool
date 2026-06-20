@@ -230,6 +230,16 @@ class SearchClient:
         ]
 
 
+class SearchMetadataClient(SearchClient):
+    def run(self, query, parameters=None, *, write=False):
+        if "RETURN chunk.embeddingModel AS modelName" in query:
+            self.calls.append(
+                {"query": query, "parameters": dict(parameters or {}), "write": write}
+            )
+            return [{"modelName": "all-MiniLM-L6-v2", "dimensions": 384, "count": 7}]
+        return super().run(query, parameters, write=write)
+
+
 class LegacySearchClient(SearchClient):
     def run(self, query, parameters=None, *, write=False):
         if query == "SHOW VECTOR INDEX INFO":
@@ -259,6 +269,28 @@ class MemorySearchClient:
                 "similarity": 0.88,
             }
         ]
+
+
+class MemoryEmbeddingMetadataClient(FakeClient):
+    def run(self, query, parameters=None, *, write=False):
+        params = dict(parameters or {})
+        self.calls.append({"query": query, "parameters": params, "write": write})
+        if query == "SHOW VECTOR INDEX INFO":
+            return [
+                {
+                    "index_name": "memory_chunk_embedding_v2_p_demo_2a97516c354b",
+                    "dimension": 768,
+                }
+            ]
+        if "RETURN chunk.embeddingModel AS modelName" in query:
+            return [{"modelName": "bge-small-en-v1.5", "dimensions": 768, "count": 4}]
+        if "AND (chunk.embedding IS NULL" in query:
+            return [{"id": chunk_id} for chunk_id in params["ids"]]
+        if "CALL embeddings.node_sentence" in query:
+            return [{"success": True, "dimension": 768, "ids": params["ids"]}]
+        if "SET chunk.embeddingModel" in query:
+            return [{"id": chunk_id} for chunk_id in params["ids"]]
+        return []
 
 
 class CallGraphClient:
@@ -1147,6 +1179,16 @@ def test_code_search_pins_configured_embedding_model():
     assert call["parameters"]["embed_config"] == {"model_name": "all-MiniLM-L6-v2"}
 
 
+def test_code_search_infers_embedding_model_from_chunk_metadata():
+    client = SearchMetadataClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    tools.code_search("hot path")
+
+    call = vector_search_call(client)
+    assert call["parameters"]["embed_config"] == {"model_name": "all-MiniLM-L6-v2"}
+
+
 def test_code_search_skips_lexical_leg_when_dedupe_disabled():
     client = HybridSearchClient()
     tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
@@ -1178,6 +1220,37 @@ def test_memory_refresh_embeddings_excludes_metadata_properties():
     assert config["embedding_property"] == "embedding"
     assert "textHash" in config["excluded_properties"]
     assert "text" not in config["excluded_properties"]
+
+
+def test_memory_refresh_embeddings_infers_model_and_dimensions():
+    client = MemoryEmbeddingMetadataClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    tools.memory_refresh_embeddings(["MCH-1"])
+
+    pending_call = next(c for c in client.calls if "AND (chunk.embedding IS NULL" in c["query"])
+    assert pending_call["parameters"]["model_name"] == "bge-small-en-v1.5"
+    assert pending_call["parameters"]["dimension"] == 768
+    embed_call = next(c for c in client.calls if "CALL embeddings.node_sentence" in c["query"])
+    assert embed_call["parameters"]["embed_config"]["model_name"] == "bge-small-en-v1.5"
+    mark_call = next(c for c in client.calls if "SET chunk.embeddingModel" in c["query"])
+    assert mark_call["parameters"]["model_name"] == "bge-small-en-v1.5"
+    assert mark_call["parameters"]["dimension"] == 768
+
+
+def test_memory_refresh_embeddings_keeps_explicit_dimension():
+    client = MemoryEmbeddingMetadataClient()
+    config = ToolConfig(
+        default_project="demo",
+        embedding_dimensions=384,
+        embedding_dimensions_explicit=True,
+    )
+    tools = MemgraphTools(config, client=client)
+
+    tools.memory_refresh_embeddings(["MCH-1"])
+
+    pending_call = next(c for c in client.calls if "AND (chunk.embedding IS NULL" in c["query"])
+    assert pending_call["parameters"]["dimension"] == 384
 
 
 def test_server_status_prefers_project_vector_indexes_and_falls_back_to_base():
