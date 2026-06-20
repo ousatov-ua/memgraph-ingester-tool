@@ -110,3 +110,4 @@ MEMORY_REFRESH_EMBEDDINGS_PENDING: str = _load(
 )
 MEMORY_REFRESH_EMBEDDINGS_EMBED: str = _load("memory/memory_refresh_embeddings_embed.cypher")
 MEMORY_REFRESH_EMBEDDINGS_MARK: str = _load("memory/memory_refresh_embeddings_mark.cypher")
+MEMORY_TAG_VECTOR_INDEX_LABEL: str = _load("memory/memory_tag_vector_index_label.cypher")

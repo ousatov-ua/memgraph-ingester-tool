@@ -18,6 +18,7 @@ from memgraph_ingester_tool.tools._memory_support import (
     _target_match,
 )
 from memgraph_ingester_tool.tools._support import _bounded_limit
+from memgraph_ingester_tool.tools._vector_index import _select_vector_index_label
 
 
 class MemoryTools(MemgraphToolsBase):
@@ -380,9 +381,27 @@ class MemoryTools(MemgraphToolsBase):
             return self._finalize_response(response) if finalize else response
 
         model_name = self._resolved_embedding_model_name(project_name, "MemoryChunk")
+        index_name, vector_index_rows = self._select_vector_index(
+            self.config.memory_embedding_index_name,
+            project_name,
+        )
+        index_label = _select_vector_index_label(
+            self.config.memory_embedding_index_name,
+            project_name,
+            index_name,
+            vector_index_rows,
+            chunk_label="MemoryChunk",
+        )
         dimension = self._resolved_embedding_dimensions(
             project_name,
             base_index_name=self.config.memory_embedding_index_name,
+            selected_index_name=index_name,
+            vector_index_rows=vector_index_rows,
+        )
+        self.client.run(
+            Q.MEMORY_TAG_VECTOR_INDEX_LABEL.replace("__VECTOR_INDEX_LABEL__", index_label),
+            {"project": project_name, "ids": ids},
+            write=True,
         )
         pending = self.client.run(
             Q.MEMORY_REFRESH_EMBEDDINGS_PENDING,

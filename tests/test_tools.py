@@ -1238,6 +1238,31 @@ def test_memory_refresh_embeddings_infers_model_and_dimensions():
     assert mark_call["parameters"]["dimension"] == 768
 
 
+def test_memory_refresh_embeddings_tags_project_vector_label_even_when_clean():
+    class CleanMemoryEmbeddingClient(MemoryEmbeddingMetadataClient):
+        def run(self, query, parameters=None, *, write=False):
+            if "AND (chunk.embedding IS NULL" in query:
+                params = dict(parameters or {})
+                self.calls.append({"query": query, "parameters": params, "write": write})
+                return []
+            return super().run(query, parameters, write=write)
+
+    client = CleanMemoryEmbeddingClient()
+    tools = MemgraphTools(ToolConfig(default_project="demo"), client=client)
+
+    result = tools.memory_refresh_embeddings(["MCH-1"])
+
+    assert result["embedded"] == []
+    tag_call = next(
+        c
+        for c in client.calls
+        if "SET chunk:MemoryChunkEmbedding_p_demo_2a97516c354b" in c["query"]
+    )
+    assert tag_call["write"] is True
+    assert tag_call["parameters"]["ids"] == ["MCH-1"]
+    assert not any("CALL embeddings.node_sentence" in c["query"] for c in client.calls)
+
+
 def test_memory_refresh_embeddings_keeps_explicit_dimension():
     client = MemoryEmbeddingMetadataClient()
     config = ToolConfig(
